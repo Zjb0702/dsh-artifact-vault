@@ -1,0 +1,9 @@
+# Bundle patch for the Artifact Vault plugin: inserts its plugin row into the
+# web profile roster. Applied as a profile bundle layer (`dsh.bundle.patch`).
+- insert:
+    - id: artifact-vault
+      name: 'dsh-artifact-vault'
+      config:
+        autoScan: true
+        scanIntervalMinutes: 10
+        maxScanPerBatch: 6

@@ -1,0 +1,55 @@
+{
+  "name": "dsh-artifact-vault",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Artifact Vault: attribute workspace files to the session that produced them, group versions, track status, and manage disk usage with a same-drive recycle bin and a C-drive cleanup planner.",
+  "keywords": [
+    "dsh-plugin",
+    "dsh",
+    "artifact",
+    "session",
+    "versioning",
+    "disk-usage",
+    "recycle-bin"
+  ],
+  "license": "MIT",
+  "icon": "icon.svg",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/en.json": "./locale/en.json",
+    "./locale/zh.json": "./locale/zh.json",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "engines": {
+      "dsh": ">=0.2.2-rc.3"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-layout"
+      ]
+    }
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib/**/*.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "locale/*.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node test/logic.mjs && node test/client-smoke.mjs && node test/host-smoke.mjs && node test/features-smoke.mjs"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Artifact Vault",
+    "description": "Attribute workspace artifacts to the session that produced them, group versions, track status, and manage disk usage with a recycle bin."
+  }
+}
