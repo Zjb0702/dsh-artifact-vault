@@ -127,6 +127,22 @@ node test/host-smoke.mjs     # scan, titles, workspace creation/adoption, compar
 node test/features-smoke.mjs # folder recycle, sorted bin, C-drive plan, safe cache cleanup
 ```
 
+## Platforms
+
+Runs wherever DSH runs: **macOS, Windows and Linux**. The plugin is pure Node with builtins only, so there is no native module to rebuild per platform.
+
+- **Path handling is platform-aware.** `pathKey` folds case only on Windows and preserves it elsewhere; every comparison goes through `node:path`, never string concatenation.
+- **Recycling across volumes works everywhere.** A same-volume move is an instant `rename`; a cross-volume move gets `EXDEV` and falls back to copy+unlink — which is why `trashOnSourceDrive` exists.
+- **Extra writable roots are honoured more completely on macOS than Windows.** The macOS Seatbelt profile turns `additionalWritableRoots` into `(allow file-write* (subpath …))`, so confined processes may write the project root too. On Windows only harness file tools honour the grant; process permissions are unchanged.
+- **Filesystem bookkeeping is filtered.** `.DS_Store`, `Thumbs.db`, `desktop.ini`, `.Spotlight-V100`, `.fseventsd`, `$RECYCLE.BIN` and similar entries never appear as untracked artifacts.
+
+Two caveats worth knowing:
+
+- **Case-insensitive filesystems.** macOS APFS is case-insensitive by default while `pathKey` preserves case off Windows, so `Report.md` and `report.md` count as two paths even though the disk sees one file. Windows is unaffected; name versions consistently if you rely on grouping.
+- **The untracked scan skips symlinks.** A workspace reached only through a symlink (for example `/var` versus `/private/var` on macOS) is not descended into; attributed sessions are unaffected because their paths come from the session log.
+
+The test suite is portable: `node test/logic.mjs` builds paths from a per-platform base and asserts the documented `pathKey` difference, so it passes on all three systems.
+
 ## Known limits
 
 - Only files written **through a tool call** are discovered; files created by hand or by another editor land in Untracked.

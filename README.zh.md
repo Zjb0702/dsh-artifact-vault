@@ -133,6 +133,22 @@ node test/features-smoke.mjs # 文件夹回收、回收站排序与还原、C �
 
 > 安全边界：`session-manager v0.7.8` 删除会话时只删 `~/.dsh/sessions/<项目>/<会话ID>/` 的日志目录（rm -rf），不动工作区文件夹、不碰 `~/.dsh/artifact-vault`。因此工作区里的 `tools/`、`artifacts/` 永远由产物管家按会话独立管理，与 C 盘清理互不干扰。
 
+## 支持平台
+
+DSH 能跑的地方它就能跑：**macOS、Windows、Linux**。插件是纯 Node、只用内置模块，没有需要按平台重编译的原生模块。
+
+- **路径处理区分平台**：`pathKey` 只在 Windows 折叠大小写，其它系统保留原样；所有比较都走 `node:path`，不用字符串拼接。
+- **跨卷回收在三个平台都成立**：同卷移动是一次瞬时的 `rename`；跨卷会拿到 `EXDEV` 并回退到复制+删除（`trashOnSourceDrive` 正是为此存在）。
+- **额外的可写根目录在 macOS 上比 Windows 更完整**：macOS 的 Seatbelt profile 会把 `additionalWritableRoots` 展开成 `(allow file-write* (subpath …))`，受控进程也能写项目根；Windows 上只有 harness 文件工具享受该授权，进程权限不变。
+- **文件系统簿记被过滤**：`.DS_Store`、`Thumbs.db`、`desktop.ini`、`.Spotlight-V100`、`.fseventsd`、`$RECYCLE.BIN` 等不会出现在「未归类」里。
+
+两个需要知道的平台差异：
+
+- **大小写不敏感文件系统**：macOS 默认的 APFS 不区分大小写，而 `pathKey` 在非 Windows 平台保留大小写，因此 `Report.md` 与 `report.md` 会被当作两个路径（磁盘上其实是同一个文件）。Windows 不受影响。若依赖版本分组，请统一命名。
+- **未归类扫描跳过符号链接**：通过符号链接到达的工作区（例如 macOS 上 `/var` 与 `/private/var`）不会继续深入；已归属的会话不受影响，因为它们的路径来自会话日志。
+
+测试套件是跨平台的：`node test/logic.mjs` 用按平台生成的基础路径，并针对 `pathKey` 的文档化差异做断言，三种系统都能通过。
+
 ## 已知边界
 
 - 只能发现**通过工具调用写入**的文件：你在终端里手敲命令生成、或用别的编辑器写的文件不会自动归属到某个会话，它们会出现在「未归类」里。

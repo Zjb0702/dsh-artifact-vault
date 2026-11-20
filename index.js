@@ -62,6 +62,10 @@ const DEFAULTS = {
     'node_modules', '.git', '.hg', '.svn', '__pycache__', '.venv', 'venv', '.cache',
     '.next', '.nuxt', '.turbo', '.tox', 'vendor', '.idea', '.vscode', '.gradle', '.m2',
     '.pytest_cache', '.mypy_cache',
+    // OS metadata directories, so a macOS or Windows workspace does not report
+    // its own filesystem bookkeeping as untracked artifacts.
+    '.spotlight-v100', '.trashes', '.fseventsd', '.documentrevisions-v100',
+    '$recycle.bin', 'system volume information',
   ],
 }
 
@@ -76,6 +80,12 @@ const WORKSPACE_RULE = `## 会话工作区
 约定：临时脚本写入 \`tools/\`，交付产物写入 \`artifacts/\`，不要在工作区根目录或共享项目目录留下散落文件；若当前工作目录已经是这类工作区文件夹，用相对路径即可。`
 
 const INDEX_VERSION = 1
+
+// Per-OS filesystem bookkeeping: never an artifact, never worth listing.
+const JUNK_FILE_NAMES = new Set([
+  '.ds_store', 'thumbs.db', 'ehthumbs.db', 'desktop.ini', '.localized',
+  'icon\r', '.spotlight-v100', '.fseventsd',
+])
 
 function isLoopback(req) {
   const address = req?.socket?.remoteAddress ?? ''
@@ -610,6 +620,8 @@ function createVault(ctx, config) {
     if (isTrashStaging(absPath)) return true
     const normalized = absPath.split(path.sep).join('/')
     if (normalized.includes('/.artifact-vault/')) return true
+    // Filesystem bookkeeping is never an artifact, whichever OS wrote it.
+    if (JUNK_FILE_NAMES.has(path.basename(absPath).toLowerCase())) return true
     // `ignoreDirs` is a walking heuristic for the untracked scan: a path a
     // session actually wrote stays visible even inside build/ or dist/, because
     // the attribution came from the log, not from guessing directories.
