@@ -121,6 +121,7 @@ window.__ModuleLoader__.load({
         'sort.label': '排序',
         'empty.sessions': '还没有索引到产物。点击「扫描更新」读取会话记录。',
         'empty.detail': '这个会话的记录里没有可识别的产物路径。',
+        'empty.search': '没有匹配的产物文件。',
         'empty.untracked': '所有文件都已归属到某个会话。',
         'empty.duplicates': '没有发现内容完全相同的文件。',
         'empty.trash': '回收站是空的。',
@@ -144,7 +145,9 @@ window.__ModuleLoader__.load({
         'meta.groups': '组',
         'meta.hashed': '已校验 {n} 个文件',
         'meta.sessions': '{n} 个会话',
-        'detail.groups': '产物（按版本分组）',
+        'detail.groups': '产物',
+        'detail.search': '搜索产物文件名…',
+        'detail.selectAll': '全选',
         'detail.noVersion': '尚未编号',
         'untracked.title': '未归类文件',
         'untracked.hint': '这些文件不来自任何已记录的会话写入（可能是手动创建，或更早的历史文件）。按文件夹分组，可整夹删除或勾选批量删除。',
@@ -282,6 +285,7 @@ window.__ModuleLoader__.load({
         'sort.label': 'Sort',
         'empty.sessions': 'Nothing indexed yet. Press "Scan now" to read session logs.',
         'empty.detail': 'No recognizable artifact paths in this session\'s log.',
+        'empty.search': 'No matching artifact files.',
         'empty.untracked': 'Every file belongs to a session.',
         'empty.duplicates': 'No byte-identical files found.',
         'empty.trash': 'The recycle bin is empty.',
@@ -305,7 +309,9 @@ window.__ModuleLoader__.load({
         'meta.groups': 'groups',
         'meta.hashed': 'hashed {n} files',
         'meta.sessions': '{n} sessions',
-        'detail.groups': 'Artifacts (grouped by version)',
+        'detail.groups': 'Artifacts',
+        'detail.search': 'Search artifact files…',
+        'detail.selectAll': 'Select all',
         'detail.noVersion': 'unnumbered',
         'untracked.title': 'Untracked files',
         'untracked.hint': 'These files never appear in a recorded session write — created by hand, or from an older history. Grouped by folder: delete a whole folder or tick rows to batch-delete.',
@@ -542,6 +548,7 @@ window.__ModuleLoader__.load({
     .av-ext{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--dsw-alias-label-secondary,#6b7280);border:1px solid var(--dsw-alias-border-l1,#e5e7eb);border-radius:5px;padding:0 5px}
     .av-ver{display:flex;align-items:center;gap:9px;padding:7px 12px;border-top:1px dashed var(--dsw-alias-border-l1,#eef0f4)}
     .av-ver:first-of-type{border-top:0}
+    .av-ver.on{background:rgba(79,70,229,.06)}
     .av-vnum{min-width:30px;text-align:center;font-size:11px;font-weight:700;color:var(--dsw-alias-label-secondary,#6b7280);background:var(--dsw-alias-bg-layer-2,#f3f4f6);border-radius:6px;padding:1px 5px;font-variant-numeric:tabular-nums}
     .av-vnum.latest{color:#fff;background:var(--dsw-alias-brand-primary,#4f46e5)}
     .av-ver .fname{font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
@@ -762,7 +769,7 @@ window.__ModuleLoader__.load({
     }
 
     // ---------------------------------------------------------- session detail
-    function VersionRow({ version, groupName, onChanged, onToast }) {
+    function VersionRow({ version, groupName, onChanged, onToast, selected = false, onToggle }) {
       const tt = useLocaleText()
       const [editing, setEditing] = useState(false)
       const [label, setLabel] = useState(version.label ?? '')
@@ -813,7 +820,16 @@ window.__ModuleLoader__.load({
         }
       }
 
-      return h('div', { className: 'av-ver' },
+      return h('div', { className: `av-ver${selected ? ' on' : ''}` },
+        onToggle
+          ? h('input', {
+            type: 'checkbox',
+            className: 'av-check',
+            checked: selected,
+            onChange: () => onToggle(version.path),
+            title: version.name,
+          })
+          : null,
         h('span', { className: `av-vnum${version.isLatest ? ' latest' : ''}` }, `v${version.version}`),
         h('span', { className: 'fname', title: version.display },
           version.label ? h('b', { style: { fontWeight: 600 } }, `${version.label} · `) : null,
@@ -849,39 +865,6 @@ window.__ModuleLoader__.load({
             h('button', { type: 'button', className: 'av-btn ghost danger', onClick: recycle, disabled: busy }, tt('action.trash'))))
     }
 
-    function GroupCard({ group, onChanged, onToast, sort = 'version', order = 'desc' }) {
-      const tt = useLocaleText()
-      const [expanded, setExpanded] = useState(false)
-      const versions = useMemo(() => {
-        const list = [...(group.versions ?? [])]
-        const dir = order === 'asc' ? 1 : -1
-        list.sort((a, b) => {
-          const left = sort === 'size' ? (a.size ?? 0) : sort === 'mtime' ? (a.mtimeMs ?? 0) : (a.version ?? 0)
-          const right = sort === 'size' ? (b.size ?? 0) : sort === 'mtime' ? (b.mtimeMs ?? 0) : (b.version ?? 0)
-          return (left - right) * (sort === 'version' ? -dir : dir)
-        })
-        return list
-      }, [group, sort, order])
-      return h('div', { className: 'av-card' },
-        h('div', { className: 'av-card-head av-group-head', onClick: () => setExpanded((v) => !v), role: 'button', tabIndex: 0,
-          onKeyDown: (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setExpanded((v) => !v) } } },
-          h('span', { className: 'av-caret' }, expanded ? '▾' : '▸'),
-          h('span', { className: 'gname' }, group.label ? `${group.label} · ${group.name}` : group.name),
-          group.ext ? h('span', { className: 'av-ext' }, group.ext) : null,
-          h('span', { className: 'gmeta' }, tt('group.versions', { n: versions.length })),
-          h('span', { className: 'gmeta' }, fmtBytes(group.bytes)),
-          group.declared ? h(Pill, { kind: 'declared' }, tt('badge.declared')) : null,
-          h('span', { style: { flex: 1 } }),
-          h('span', { className: 'gmeta', title: group.dir }, shortPath(group.dir, 52))),
-        expanded ? versions.map((version, index) => h(VersionRow, {
-          key: version.path,
-          version: { ...version, isLatest: version.version === versions.length && sort === 'version' },
-          groupName: group.name,
-          onChanged,
-          onToast,
-        })) : null)
-    }
-
     function SessionDetail({ sessionId, onBack, onChanged, onToast }) {
       const tt = useLocaleText()
       const [data, setData] = useState(null)
@@ -889,6 +872,9 @@ window.__ModuleLoader__.load({
       const [loading, setLoading] = useState(true)
       const [versionSort, setVersionSort] = useState('version')
       const [versionOrder, setVersionOrder] = useState('desc')
+      const [fileQuery, setFileQuery] = useState('')
+      const [selected, setSelected] = useState(() => new Set())
+      const [busy, setBusy] = useState(false)
 
       const load = useCallback(async (fresh) => {
         setLoading(true)
@@ -896,6 +882,7 @@ window.__ModuleLoader__.load({
         try {
           const payload = await request(`session?id=${encodeURIComponent(sessionId)}${fresh ? '&fresh=1' : ''}`)
           setData(payload)
+          setSelected(new Set())
         } catch (caught) {
           setError(caught.message)
         } finally {
@@ -929,6 +916,83 @@ window.__ModuleLoader__.load({
           onToast(`${tt('error.prefix')}: ${caught.message}`)
         }
       }, [load, onChanged, onToast, sessionId, tt])
+
+      // Flatten groups[].versions[] into a single artifact list, with search and sort.
+      const files = useMemo(() => {
+        const needle = fileQuery.trim().toLowerCase()
+        const list = []
+        for (const group of data?.groups ?? []) {
+          for (const version of group.versions ?? []) {
+            if (needle !== '' && !`${version.name} ${group.name} ${version.display} ${version.path}`.toLowerCase().includes(needle)) continue
+            list.push({ ...version, groupName: group.name, groupKey: group.key })
+          }
+        }
+        const dir = versionOrder === 'asc' ? 1 : -1
+        list.sort((a, b) => {
+          const av = versionSort === 'size' ? (a.size ?? 0)
+            : versionSort === 'mtime' ? (a.mtimeMs ?? 0)
+              : versionSort === 'name' ? a.name.toLowerCase()
+                : (a.version ?? 0)
+          const bv = versionSort === 'size' ? (b.size ?? 0)
+            : versionSort === 'mtime' ? (b.mtimeMs ?? 0)
+              : versionSort === 'name' ? b.name.toLowerCase()
+                : (b.version ?? 0)
+          if (typeof av === 'string') return av.localeCompare(bv) * dir
+          return (av - bv) * dir
+        })
+        return list
+      }, [data, fileQuery, versionSort, versionOrder])
+
+      const selectedBytes = useMemo(() => {
+        if (selected.size === 0) return 0
+        let total = 0
+        for (const group of data?.groups ?? []) {
+          for (const version of group.versions ?? []) if (selected.has(version.path)) total += Number(version.size ?? 0)
+        }
+        return total
+      }, [selected, data])
+
+      const toggle = useCallback((filePath) => {
+        setSelected((previous) => {
+          const next = new Set(previous)
+          if (next.has(filePath)) next.delete(filePath)
+          else next.add(filePath)
+          return next
+        })
+      }, [])
+
+      const visiblePaths = files.map((file) => file.path)
+      const allVisibleSelected = visiblePaths.length > 0 && visiblePaths.every((p) => selected.has(p))
+      const toggleAll = () => {
+        setSelected((previous) => {
+          const next = new Set(previous)
+          if (allVisibleSelected) for (const p of visiblePaths) next.delete(p)
+          else for (const p of visiblePaths) next.add(p)
+          return next
+        })
+      }
+
+      const trashSelected = async () => {
+        const paths = [...selected]
+        if (paths.length === 0) return
+        if (!window.confirm(tt('confirm.trashSelected', { n: paths.length }))) return
+        setBusy(true)
+        try {
+          const result = await request('trash-many', { method: 'POST', body: { paths, sessionId } })
+          onToast(tt('action.trashedMany', {
+            n: result.moved,
+            size: fmtBytes(result.bytes),
+            failed: result.failed > 0 ? tt('action.trashedFailed', { n: result.failed }) : '',
+          }))
+          setSelected(new Set())
+          await load(false)
+          onChanged()
+        } catch (caught) {
+          onToast(`${tt('error.prefix')}: ${caught.message}`)
+        } finally {
+          setBusy(false)
+        }
+      }
 
       const header = data?.session
       const workspace = data?.session?.workspace ?? null
@@ -979,7 +1043,7 @@ window.__ModuleLoader__.load({
           h(Btn, { variant: 'ghost', onClick: () => load(true) }, tt('retry'))) : null,
         header?.error ? h('div', { className: 'av-err' }, `${tt('badge.error')}: ${header.error}`) : null,
         loading && !data ? h(Skel, null) : null,
-        data && (data.groups ?? []).length === 0
+        data && (data.totals?.versions ?? 0) === 0
           ? h(Empty, null, tt('empty.detail'))
           : h('div', null,
             h('div', { className: 'av-section-head' },
@@ -990,29 +1054,59 @@ window.__ModuleLoader__.load({
                   { key: 'version', labelKey: 'sort.version' },
                   { key: 'size', labelKey: 'sort.fileSize' },
                   { key: 'mtime', labelKey: 'sort.mtime' },
+                  { key: 'name', labelKey: 'sort.name' },
                 ],
                 onChange: (key) => setVersionSort(key),
                 onToggleOrder: () => setVersionOrder((v) => v === 'desc' ? 'asc' : 'desc'),
               })),
-            (data?.groups ?? [])
-              .slice()
-              .sort((a, b) => {
-                const dir = versionOrder === 'asc' ? 1 : -1
-                const av = versionSort === 'size' ? a.bytes : versionSort === 'mtime' ? a.lastTime : a.lastTime
-                const bv = versionSort === 'size' ? b.bytes : versionSort === 'mtime' ? b.lastTime : b.lastTime
-                return (av - bv) * dir
-              })
-              .map((group) => h(GroupCard, {
-                key: group.key,
-                group,
-                sort: versionSort,
-                order: versionOrder,
-                onChanged: () => {
-                  load(false)
-                  onChanged()
-                },
-                onToast,
-              }))))
+            h('div', { className: 'av-toolbar av-toolbar-box' },
+              h('span', { className: 'av-count' },
+                `${fmtCount(files.length)} / ${fmtCount(data?.totals?.versions ?? 0)} ${tt('meta.artifacts')}`),
+              h('input', {
+                className: 'av-search',
+                value: fileQuery,
+                placeholder: tt('detail.search'),
+                onChange: (event) => setFileQuery(event.target.value),
+              })),
+            selected.size > 0
+              ? h('div', { className: 'av-bulkbar' },
+                h('span', null, tt('untracked.selected', { n: selected.size, size: fmtBytes(selectedBytes) })),
+                h('span', { style: { flex: 1 } }),
+                h(Btn, { variant: 'ghost', onClick: () => setSelected(new Set()) }, tt('action.clear')),
+                h(Btn, { variant: 'danger', onClick: trashSelected, disabled: busy }, tt('action.trashSelected')))
+              : null,
+            h('div', { className: 'av-box' },
+              h('div', { className: 'av-box-head' },
+                h('input', {
+                  type: 'checkbox',
+                  className: 'av-check',
+                  checked: allVisibleSelected,
+                  onChange: toggleAll,
+                  disabled: visiblePaths.length === 0,
+                  title: tt('detail.selectAll'),
+                }),
+                h('button', {
+                  type: 'button',
+                  className: 'av-box-toggle',
+                  onClick: toggleAll,
+                }, h('span', { className: 'av-box-title' }, tt('detail.selectAll'))),
+                h('span', { className: 'av-box-meta' }, `${fmtCount(files.length)} ${tt('meta.artifacts')}`),
+                h('span', { className: 'av-box-meta' }, fmtBytes(files.reduce((sum, f) => sum + Number(f.size ?? 0), 0)))),
+              h('div', { className: 'av-box-body' },
+                files.length === 0
+                  ? h('div', { style: { padding: '14px', fontSize: 12, color: 'var(--dsw-alias-label-secondary,#6b7280)' } }, tt('empty.search'))
+                  : files.slice(0, 1000).map((file) => h(VersionRow, {
+                    key: file.path,
+                    version: file,
+                    groupName: file.groupName,
+                    selected: selected.has(file.path),
+                    onToggle: toggle,
+                    onChanged: () => {
+                      load(false)
+                      onChanged()
+                    },
+                    onToast,
+                  }))))))
     }
 
     // --------------------------------------------------------- untracked view

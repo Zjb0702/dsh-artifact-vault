@@ -110,4 +110,11 @@ assert.equal(styles.length, 1, 'the stylesheet is injected exactly once')
 assert.match(styles[0].textContent, /\.av-root\{/, 'the stylesheet carries the page styles')
 assert.match(styles[0].textContent, /--dsw-alias-/, 'styles must consume theme tokens instead of hard-coded colors')
 
-console.log('client smoke test passed: loader handshake, inject list, settings.section + icon, locale, styles')
+// --- session detail is a flat artifact list with batch delete ------------
+assert.ok(!/detail\.groups[^\n]*grouped/i.test(source), 'session detail heading must not say "grouped by version"')
+assert.ok(!/function GroupCard\b/.test(source), 'the version-grouping GroupCard must be gone from the session detail')
+assert.ok(/files\.slice\(0,\s*1000\)\.map\(\(file\) => h\(VersionRow/.test(source), 'session detail must render a flat VersionRow list')
+assert.ok(/onToggle\s*\?\s*h\('input'[\s\S]{0,120}type:\s*'checkbox'/.test(source), 'VersionRow must offer a selection checkbox')
+assert.ok(/request\('trash-many'[\s\S]{0,160}sessionId/.test(source), 'batch delete must reuse /trash-many with the session id')
+
+console.log('client smoke test passed: loader handshake, inject, settings seat, locale, styles, flat artifact list + batch delete')
