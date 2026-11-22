@@ -1,6 +1,6 @@
 {
   "name": "dsh-artifact-vault",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "description": "产物管家（Artifact Vault）：按产出这些文件的会话归属工作区文件，同名文件按版本分组并标注状态，通过同盘回收站与 C 盘清理计划管理磁盘占用。",
   "repository": {

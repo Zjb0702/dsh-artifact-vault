@@ -21,7 +21,11 @@ const ROUTE_BASE = '/api/dsh-artifact-vault'
 const MOUNT_FLAG = Symbol.for('dsh.artifact-vault.mounted')
 
 export const name = 'artifact-vault'
-export const inject = ['webServer']
+// `connection` supplies requestRejection(): the Host/Origin fence defeats DNS
+// rebinding and cross-site calls, and the login-token cookie authenticates the
+// browser caller. Without it, any page open in the user's browser could POST
+// to our loopback routes and recycle/purge files behind the user's back.
+export const inject = ['webServer', 'connection']
 
 const DEFAULTS = {
   enabled: true,
@@ -1878,9 +1882,26 @@ function createVault(ctx, config) {
   return service
 }
 
-/** Make the routes; every route enforces the loopback fence + method. */
+/** Make the routes; every route enforces the connection fence + loopback + method. */
 function makeRoutes(ctx, service) {
+  // The composition's connection service owns the security boundary. Its
+  // requestRejection() checks Host/Origin (blocking DNS rebinding and CSRF from
+  // any page the user has open) and requires an authenticated browser peer.
+  // It returns a status code to reject with, or undefined to admit. Look it up
+  // defensively so headless tests without a live Cordis graph still work.
+  const connection = ctx?.connection ?? (typeof ctx?.get === 'function' ? ctx.get('connection', false) : undefined)
+  const requestRejection = typeof connection?.requestRejection === 'function'
+    ? (req) => connection.requestRejection(req)
+    : () => undefined
+
   const guard = (req, res, method) => {
+    // DSH's own access check first: untrusted or unauthenticated callers never
+    // reach any file operation. The loopback test stays as defence in depth.
+    const rejection = requestRejection(req)
+    if (rejection !== undefined) {
+      writeJson(res, Number(rejection) || 403, { error: 'forbidden: untrusted or unauthenticated request' })
+      return false
+    }
     if (!isLoopback(req)) {
       writeJson(res, 403, { error: 'forbidden: loopback only' })
       return false
