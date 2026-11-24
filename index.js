@@ -145,6 +145,7 @@ function emptyIndex() {
     sessions: {},
     trash: [],
     files: {},
+    ignoredIds: [],
   }
 }
 
@@ -245,12 +246,18 @@ function createVault(ctx, config) {
     }
   }
 
+  /** A session the user removed from the panel (or skipped via config). */
+  function isIgnoredId(id) {
+    if (asList(settings.skipSessionIds).includes(id)) return true
+    return asList(index.ignoredIds).includes(id)
+  }
+
   function shouldAdopt(entry) {
     if (!settings.sessionFolders) return false
     if (settings.autoAdoptSessions === false && entry?.wantFolder !== true) return false
     if (!entry?.id) return false
     if (entry.origin === 'subagent') return false
-    if (asList(settings.skipSessionIds).includes(entry.id)) return false
+    if (isIgnoredId(entry.id)) return false
     // A session that was already running has a cwd its processes still rely on;
     // only sessions created after this activation move automatically. The panel
     // can still opt an older session in explicitly (wantFolder).
@@ -462,6 +469,55 @@ function createVault(ctx, config) {
     return { removed }
   }
 
+  /**
+   * Remove one session from the panel on the user's explicit request and send
+   * its workspace folder to the recycle bin in one move. The DSH session
+   * memory (~/.dsh/sessions) is never touched — this forgets the panel record
+   * and clears the folder. A session that is still running is refused; one
+   * that still exists in the DSH store is remembered in index.ignoredIds so
+   * the scanner does not silently re-index it and recreate the folder (the
+   * ignore lifts automatically when the session is opened in DSH again).
+   */
+  async function deleteSession({ id } = {}) {
+    await load()
+    const target = String(id ?? '').trim()
+    if (!target) throw new Error('id is required')
+    const rootId = rootIdOf(target)
+    if (sessions()?.get?.(rootId)) throw new Error('会话仍在 DSH 中运行，请先在 DSH 中删除或结束该会话')
+    const rootEntry = index.sessions[rootId]
+    const members = membersOf(rootId).filter((member) => index.sessions[member])
+    if (!rootEntry && members.length === 0 && !index.ignoredIds?.includes?.(rootId)) throw new Error('session not found')
+    let folder = safeString(rootEntry?.folder)
+    if (folder) {
+      // Only a session workspace folder may be removed wholesale; anything
+      // else falls back to remembering the record without touching disk.
+      if (!isSessionWorkspace(path.basename(folder))) folder = ''
+    }
+    let trashed = false
+    let trashId = null
+    let bytes = 0
+    if (folder && existsSync(folder)) {
+      bytes = await dirSize(folder)
+      trashId = randomUUID()
+      const { destination } = await stageTrashEntry(trashId, folder, path.basename(folder))
+      index.trash.unshift({
+        id: trashId, kind: 'folder', p: folder, size: bytes, at: Date.now(),
+        sessionId: rootId, reason: 'session-removed', staged: destination,
+      })
+      if (index.trash.length > 5000) index.trash.length = 5000
+      trashed = true
+    }
+    for (const member of members) {
+      const entry = index.sessions[member]
+      for (const write of asList(entry?.writes)) delete index.files[write.key ?? pathKey(write.p)]
+      for (const manual of asList(entry?.manual)) delete index.files[manual.key ?? pathKey(manual.p)]
+      delete index.sessions[member]
+    }
+    index.ignoredIds = [...new Set([...asList(index.ignoredIds), rootId, ...members])]
+    await flushSave()
+    return { ok: true, id: rootId, folder: folder || null, trashed, trashId, bytes }
+  }
+
   async function load() {
     if (loaded) return
     loaded = true
@@ -472,6 +528,7 @@ function createVault(ctx, config) {
       index.files = stored.files && typeof stored.files === 'object' ? stored.files : {}
       index.updatedAt = Number(stored.updatedAt ?? 0)
     }
+    index.ignoredIds = asList(index.ignoredIds)
     return service
   }
 
@@ -495,6 +552,7 @@ function createVault(ctx, config) {
           sessions: index.sessions,
           trash: index.trash,
           files: index.files,
+          ignoredIds: asList(index.ignoredIds),
         })
       } catch (error) {
         ctx.logger?.warn?.(`[artifact-vault] save failed: ${error?.message ?? error}`)
@@ -678,6 +736,16 @@ function createVault(ctx, config) {
   }
 
   async function scanOne(record) {
+    // A session the user removed from the panel stays removed — unless it is
+    // open in DSH again, in which case the ignore lifts and tracking resumes.
+    if (isIgnoredId(record.id)) {
+      if (sessions()?.get?.(record.id)) {
+        index.ignoredIds = asList(index.ignoredIds).filter((item) => item !== record.id)
+        save()
+      } else {
+        return
+      }
+    }
     const existing = index.sessions[record.id]
     const manual = asList(existing?.manual)
     const title = existing?.title ?? null
@@ -847,6 +915,7 @@ function createVault(ctx, config) {
         .map((record) => ({ ...record, writeTime: Number(cachedTitles[record.id]?.lastTime ?? record.createdAt) }))
         .sort(newestFirst)
       const todo = candidates.filter((record) => {
+        if (isIgnoredId(record.id) && !sessions()?.get?.(record.id)) return false
         const cached = index.sessions[record.id]
         if (!cached) return true
         if (force) return true
@@ -1876,7 +1945,7 @@ function createVault(ctx, config) {
     isIgnoredPath, settings, dataDir, indexFile, trashDir, statOf,
     listTrash, dirSize, cDriveUsage, cDriveClean,
     // per-session workspaces
-    adoptAgent, adopt, cleanup, reconcileDeleted, workspaceInfo, ensureSessionFolder,
+    adoptAgent, adopt, cleanup, reconcileDeleted, deleteSession, workspaceInfo, ensureSessionFolder,
     folderOf, workspaceRule: WORKSPACE_RULE,
   })
   return service
@@ -2182,6 +2251,19 @@ function makeRoutes(ctx, service) {
             area,
             all: body.all === true,
           }))
+        } catch (error) {
+          fail(res, error)
+        }
+      },
+    },
+    {
+      kind: 'exact',
+      path: `${ROUTE_BASE}/session-delete`,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        try {
+          const body = await readBody(req)
+          writeJson(res, 200, await service.deleteSession({ id: typeof body.id === 'string' ? body.id : '' }))
         } catch (error) {
           fail(res, error)
         }

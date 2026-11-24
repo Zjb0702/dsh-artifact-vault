@@ -129,5 +129,85 @@ assert.equal(existsSync(work), true, 'the workspace root is untouched')
 
 await assert.rejects(() => vault.cDriveClean({ ids: [`session:${liveSid}`] }), 'cleaning a non-plan id is refused')
 
+// --- delete session: folder to the recycle bin, record ignored -----------
+const delRoot = path.join(root, 'work2')
+await mkdir(delRoot, { recursive: true })
+const goneId = 'session-gone'
+const live2Id = 'session-live2'
+const delHeader = { version: 1, id: goneId, createdAt: T0, cwd: delRoot, isSeeded: false }
+const delHeader2 = { version: 1, id: live2Id, createdAt: T0, cwd: delRoot, isSeeded: false }
+const records2 = [
+  { header: delHeader, live: false, persisted: true },
+  { header: delHeader2, live: false, persisted: true },
+]
+const liveSet = new Set()
+const ctx2 = {
+  logger: { warn() {} },
+  get(key) {
+    if (key === 'sessionQuery') return {
+      listSessions: async () => records2,
+      readSession: async (id) => (id === goneId
+        ? { session: delHeader, inheritedEventCount: 0, events: [{ type: 'turn/start', data: { turn: 1 }, time: T0 }] }
+        : id === live2Id
+          ? { session: delHeader2, inheritedEventCount: 0, events: [{ type: 'turn/start', data: { turn: 1 }, time: T0 }] }
+          : undefined),
+      readTitle: async () => undefined,
+    }
+    if (key === 'sessionPersistence') return { list: async () => [], stat: async () => undefined }
+    if (key === 'sessions') return { list: () => [...liveSet], get: (id) => (liveSet.has(id) ? { id } : undefined) }
+    if (key === 'tools') return null
+    return undefined
+  },
+}
+const vault2 = createVault(ctx2, { dshHome: home, roots: [delRoot], autoScan: false })
+await vault2.load()
+await vault2.scanNow({ force: true, max: 5 })
+
+const detail2 = await vault2.sessionDetail(goneId)
+const sessFolder = detail2?.session?.folder
+assert.ok(sessFolder, 'the adopted session has a workspace folder')
+assert.equal(existsSync(sessFolder), true, 'the workspace folder exists before the delete')
+
+const delRes = await vault2.deleteSession({ id: goneId })
+assert.equal(delRes.ok, true)
+assert.equal(delRes.trashed, true, 'the workspace folder is staged to the recycle bin')
+assert.equal(existsSync(sessFolder), false, 'the workspace folder leaves its path')
+const delTrash = await vault2.listTrash({})
+const delEntry = delTrash.items.find((item) => item.id === delRes.trashId)
+assert.ok(delEntry, 'the recycle bin holds the deleted session folder')
+assert.equal(delEntry.kind, 'folder')
+assert.equal(delEntry.reason, 'session-removed')
+
+const afterDel = await vault2.overview()
+assert.equal(afterDel.sessions.some((s) => s.id === goneId), false, 'the panel no longer lists the deleted session')
+
+// the scanner must not resurrect a deleted session that still exists in DSH
+await vault2.scanNow({ force: true, max: 5 })
+assert.equal(existsSync(sessFolder), false, 'rescan does not recreate the deleted folder')
+const afterRescan = await vault2.overview()
+assert.equal(afterRescan.sessions.some((s) => s.id === goneId), false, 'the deleted session stays ignored')
+
+// restoring brings the workspace folder back
+await vault2.restore({ id: delRes.trashId })
+assert.equal(existsSync(sessFolder), true, 'restore brings the session workspace back')
+
+// deleting twice is idempotent: nothing left to stage
+const delAgain = await vault2.deleteSession({ id: goneId })
+assert.equal(delAgain.ok, true)
+assert.equal(delAgain.trashed, false, 'a second delete has nothing to stage')
+
+// a live session refuses deletion
+liveSet.add(live2Id)
+await assert.rejects(
+  () => vault2.deleteSession({ id: live2Id }),
+  /仍在 DSH 中运行/,
+  'a live session refuses deletion',
+)
+
+// an ignored session that goes live again is un-ignored and re-indexed
+liveSet.add(goneId)
+await vault2.scanNow({ force: true, max: 5 })
+const revived = await vault2.overview()
+assert.equal(revived.sessions.some((s) => s.id === goneId), true, 'an ignored session is re-indexed once it is live again')
 await rm(root, { recursive: true, force: true })
 console.log('feature smoke test passed: folder trash, sorted recycle bin, restore folder, C-drive usage plan, safe cache cleanup')

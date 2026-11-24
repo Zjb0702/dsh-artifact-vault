@@ -163,6 +163,10 @@ window.__ModuleLoader__.load({
         'action.trashedFailed': '，{n} 个失败',
         'confirm.trashSelected': '把所选的 {n} 个文件移入回收站？',
         'confirm.trashFolder': '把文件夹「{name}」整体移入回收站？含 {n} 个文件、{size}，可整体还原。',
+        'action.deleteSession': '删除会话',
+        'action.sessionDeleted': '已删除会话，文件夹已移入回收站',
+        'confirm.deleteSession': '删除会话「{name}」？其工作区文件夹（含 {n} 个文件、{size}）将整体移入回收站，可在回收站还原；DSH 的会话记录不受影响。',
+        'error.sessionLive': '会话仍在 DSH 中运行，请先在 DSH 中删除该会话',
         'trash.title': '回收站',
         'trash.hint': '产物回收只移动文件、不删除内容；还原时若原路径已存在会拒绝。',
         'dup.title': '重复文件',
@@ -327,6 +331,10 @@ window.__ModuleLoader__.load({
         'action.trashedFailed': '; {n} failed',
         'confirm.trashSelected': 'Move the {n} selected files to the recycle bin?',
         'confirm.trashFolder': 'Move the whole folder "{name}" to the recycle bin? It holds {n} files ({size}) and can be restored as one unit.',
+        'action.deleteSession': 'Delete session',
+        'action.sessionDeleted': 'Session removed; its folder moved to the recycle bin',
+        'confirm.deleteSession': 'Delete session "{name}"? Its workspace folder ({n} files, {size}) moves to the recycle bin as one unit and can be restored there; the DSH session itself is untouched.',
+        'error.sessionLive': 'The session is still running in DSH; delete it there first',
         'trash.title': 'Recycle bin',
         'trash.hint': 'Recycling only moves files; restoring refuses when the original path exists again.',
         'dup.title': 'Duplicate files',
@@ -737,7 +745,7 @@ window.__ModuleLoader__.load({
     }
 
     // ------------------------------------------------------------ session row
-    function SessionRow({ row, onOpen }) {
+    function SessionRow({ row, onOpen, onDelete }) {
       const tt = useLocaleText()
       const title = row.title || tt('session.unnamed')
       const pills = []
@@ -764,7 +772,20 @@ window.__ModuleLoader__.load({
         h('div', { className: 'metrics' },
           h('span', null, `${row.artifacts} ${tt('meta.artifacts')}`),
           h('span', null, fmtBytes(row.bytes)),
-          h('span', null, fmtTime(row.lastActivity))),
+          h('span', null, fmtTime(row.lastActivity)),
+          onDelete
+            ? h('button', {
+              type: 'button',
+              className: 'av-btn ghost danger',
+              style: { marginLeft: 10 },
+              disabled: row.live,
+              title: row.live ? tt('error.sessionLive') : tt('action.deleteSession'),
+              onClick: (event) => {
+                event.stopPropagation()
+                onDelete(row)
+              },
+            }, tt('action.deleteSession'))
+            : null),
         h('div', { className: 'arrow' }, '›'))
     }
 
@@ -997,6 +1018,28 @@ window.__ModuleLoader__.load({
       const header = data?.session
       const workspace = data?.session?.workspace ?? null
       const areas = data?.areas ?? null
+
+      // Remove the whole session from the panel: folder goes to the recycle
+      // bin as one unit, the DSH session itself is untouched.
+      const deleteSession = useCallback(async () => {
+        if (!header) return
+        if (!window.confirm(tt('confirm.deleteSession', {
+          name: header.title || tt('session.unnamed'),
+          n: data?.totals?.versions ?? 0,
+          size: fmtBytes(data?.totals?.bytes ?? 0),
+        }))) return
+        setBusy(true)
+        try {
+          await request('session-delete', { method: 'POST', body: { id: sessionId } })
+          onToast(tt('action.sessionDeleted'))
+          onChanged()
+          onBack()
+        } catch (caught) {
+          onToast(`${tt('error.prefix')}: ${caught.message}`)
+        } finally {
+          setBusy(false)
+        }
+      }, [data, header, onBack, onChanged, onToast, sessionId, tt])
       return h('div', null,
         h('div', { className: 'av-detail-head' },
           h(Btn, { onClick: onBack }, `‹ ${tt('action.back')}`),
@@ -1009,7 +1052,14 @@ window.__ModuleLoader__.load({
               h('span', null, tt('meta.artifacts')), h('b', null, `${fmtCount(data?.totals?.versions ?? 0)} / ${fmtBytes(data?.totals?.bytes ?? 0)}`),
               h('span', null, tt('meta.turns')), h('b', null, fmtCount(header?.turns ?? 0)),
               h('span', null, tt('meta.subagents')), h('b', null, fmtCount(header?.subagents ?? 0)))),
-          h(Btn, { onClick: () => load(true), disabled: loading }, tt('action.reveal'))),
+          h('div', { style: { display: 'flex', gap: 8 } },
+            h(Btn, { onClick: () => load(true), disabled: loading }, tt('action.reveal')),
+            h(Btn, {
+              variant: 'ghost danger',
+              onClick: deleteSession,
+              disabled: busy || header?.live,
+              title: header?.live ? tt('error.sessionLive') : tt('action.deleteSession'),
+            }, tt('action.deleteSession')))),
         header && workspace
           ? h('div', { className: 'av-folder' },
             h('div', { className: 'av-kv' },
@@ -1705,6 +1755,23 @@ window.__ModuleLoader__.load({
         void loadOverview(true)
       }, [loadOverview])
 
+      // Remove a session from the panel straight from the list row.
+      const deleteSession = useCallback(async (row) => {
+        if (!window.confirm(tt('confirm.deleteSession', {
+          name: row.title || tt('session.unnamed'),
+          n: row.artifacts ?? 0,
+          size: fmtBytes(row.bytes ?? 0),
+        }))) return
+        try {
+          await request('session-delete', { method: 'POST', body: { id: row.id } })
+          toast(tt('action.sessionDeleted'))
+          if (detailId === row.id) setDetailId(null)
+          await loadOverview(false)
+        } catch (caught) {
+          toast(`${tt('error.prefix')}: ${caught.message}`)
+        }
+      }, [detailId, loadOverview, toast, tt])
+
       const runScan = useCallback(async () => {
         setScan({ done: 0, total: 0 })
         try {
@@ -1832,7 +1899,7 @@ window.__ModuleLoader__.load({
               : (sessions.length === 0
                 ? h(Empty, null, loading ? tt('loading') : tt('empty.sessions'))
                 : h('div', { className: 'av-list' },
-                  sessions.map((row) => h(SessionRow, { key: row.id, row, onOpen: setDetailId })))))
+                  sessions.map((row) => h(SessionRow, { key: row.id, row, onOpen: setDetailId, onDelete: deleteSession })))))
             : null,
 
           tab === 'untracked' ? h(UntrackedView, { onToast: toast }) : null,

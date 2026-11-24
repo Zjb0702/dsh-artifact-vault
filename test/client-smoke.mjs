@@ -117,4 +117,10 @@ assert.ok(/files\.slice\(0,\s*1000\)\.map\(\(file\) => h\(VersionRow/.test(sourc
 assert.ok(/onToggle\s*\?\s*h\('input'[\s\S]{0,120}type:\s*'checkbox'/.test(source), 'VersionRow must offer a selection checkbox')
 assert.ok(/request\('trash-many'[\s\S]{0,160}sessionId/.test(source), 'batch delete must reuse /trash-many with the session id')
 
+// --- sessions page can delete a whole session ---------------------------
+assert.ok(/request\('session-delete'/.test(source), 'both session views must call the session-delete route')
+assert.ok(/onDelete: deleteSession/.test(source), 'the session list must hand onDelete to each row')
+assert.ok(/action\.deleteSession/.test(source) && /confirm\.deleteSession/.test(source), 'delete-session i18n keys are used')
+assert.ok(/error\.sessionLive/.test(source), 'live sessions must surface the refuse-to-delete hint')
+
 console.log('client smoke test passed: loader handshake, inject, settings seat, locale, styles, flat artifact list + batch delete')
