@@ -168,6 +168,16 @@ const sessFolder = detail2?.session?.folder
 assert.ok(sessFolder, 'the adopted session has a workspace folder')
 assert.equal(existsSync(sessFolder), true, 'the workspace folder exists before the delete')
 
+// a file inside the session folder stages OUTSIDE it (never inside the tree
+// a later whole-session delete would carry away)
+const latePath = path.join(sessFolder, 'artifacts', 'late.txt')
+await writeFile(latePath, 'late')
+await vault2.declare({ sessionId: goneId, path: latePath })
+const fileTrash = await vault2.trash({ path: latePath, sessionId: goneId })
+const fileEntry = (await vault2.listTrash({})).items.find((item) => item.id === fileTrash.id)
+assert.ok(fileEntry?.staged, 'the file trash records its staged path')
+assert.equal(fileEntry.staged.toLowerCase().startsWith(sessFolder.toLowerCase()), false, 'file staging stays outside the session folder')
+
 const delRes = await vault2.deleteSession({ id: goneId })
 assert.equal(delRes.ok, true)
 assert.equal(delRes.trashed, true, 'the workspace folder is staged to the recycle bin')
@@ -209,5 +219,57 @@ liveSet.add(goneId)
 await vault2.scanNow({ force: true, max: 5 })
 const revived = await vault2.overview()
 assert.equal(revived.sessions.some((s) => s.id === goneId), true, 'an ignored session is re-indexed once it is live again')
+// --- regression: deleting a session whose folder is its own scan root ----
+const selfRoot = path.join(root, 'work3')
+await mkdir(selfRoot, { recursive: true })
+const selfId = 'session-selfroot'
+const selfHeader = { version: 1, id: selfId, createdAt: T0, cwd: selfRoot, isSeeded: false }
+const selfLive = { id: selfId, header: selfHeader }
+let selfLiveVisible = true
+const records3 = [{ header: selfHeader, live: true, persisted: true }]
+const ctx3 = {
+  logger: { warn() {} },
+  get(key) {
+    if (key === 'sessionQuery') return {
+      listSessions: async () => records3,
+      readSession: async (id) => (id === selfId
+        ? { session: selfHeader, inheritedEventCount: 0, events: [{ type: 'turn/start', data: { turn: 1 }, time: T0 }] }
+        : undefined),
+      readTitle: async () => undefined,
+    }
+    if (key === 'sessionPersistence') return { list: async () => [], stat: async () => undefined }
+    if (key === 'sessions') return { list: () => (selfLiveVisible ? [selfLive] : []), get: (id) => (id === selfId && selfLiveVisible ? selfLive : undefined) }
+    if (key === 'workingDirectory') return {
+      get: () => selfLive.cwd ?? selfRoot,
+      set: async (agent, dir) => { selfLive.cwd = dir; return dir },
+    }
+    if (key === 'sandboxPolicy') return { registerWritableRoot: () => () => {} }
+    if (key === 'tools') return null
+    return undefined
+  },
+}
+const home3 = path.join(root, 'home3')
+await mkdir(home3, { recursive: true })
+const vault3 = createVault(ctx3, { dshHome: home3, roots: [], autoScan: false })
+await vault3.load()
+await vault3.scanNow({ force: true, max: 5 })
+
+// The session was adopted while live, then disposed; its workspace remains.
+selfLiveVisible = false
+
+const selfDetail = await vault3.sessionDetail(selfId)
+const selfFolder = selfDetail?.session?.folder
+assert.ok(selfFolder, 'the adopted session has a workspace folder')
+assert.ok(selfFolder.toLowerCase().startsWith(selfRoot.toLowerCase()), 'the folder lives under the project root')
+
+const delSelf = await vault3.deleteSession({ id: selfId })
+assert.equal(delSelf.ok, true)
+assert.equal(delSelf.trashed, true, 'deleting a self-rooted session must not hit EPERM')
+assert.equal(existsSync(selfFolder), false, 'the folder left its path')
+const selfEntry = (await vault3.listTrash({})).items.find((item) => item.id === delSelf.trashId)
+assert.ok(selfEntry?.staged, 'the recycle bin records the staged path')
+assert.equal(selfEntry.staged.toLowerCase().startsWith(selfFolder.toLowerCase()), false, 'staging must never live inside the deleted folder itself')
+assert.ok(selfEntry.staged.toLowerCase().startsWith(selfRoot.toLowerCase()), 'staging lands beside the enclosing project (same volume)')
+
 await rm(root, { recursive: true, force: true })
 console.log('feature smoke test passed: folder trash, sorted recycle bin, restore folder, C-drive usage plan, safe cache cleanup')

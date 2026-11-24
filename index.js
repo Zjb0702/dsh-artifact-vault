@@ -1582,17 +1582,40 @@ function createVault(ctx, config) {
     return String(absPath ?? '').split(path.sep).join('/').split('/').includes(name)
   }
 
+  function trashDirNameOf() {
+    return safeString(settings.trashDirName) || '.dsh-artifact-vault-trash'
+  }
+
+  // The staging base must live OUTSIDE the source: renaming a folder into a
+  // subfolder of itself fails (EPERM), and staging inside a session workspace
+  // would let a later whole-session delete carry the recycle bin away with it.
   function trashBaseFor(sourceAbs) {
     if (settings.trashOnSourceDrive === false) return trashDir
+    const trashName = trashDirNameOf()
+    const source = path.resolve(sourceAbs)
     for (const root of rootsForScan()) {
-      if (isInside(root, sourceAbs)) {
-        return path.join(root, safeString(settings.trashDirName) || '.dsh-artifact-vault-trash')
+      if (root === source) continue
+      if (isSessionWorkspace(path.basename(root))) continue
+      if (isInside(root, source) && !isInside(source, root)) return path.join(root, trashName)
+    }
+    // The source is a session workspace itself (deleteSession) or sits inside
+    // one without a managed project root: stage beside the enclosing project.
+    let dir = source
+    if (isSessionWorkspace(path.basename(dir))) {
+      return path.join(path.dirname(path.dirname(dir)), trashName)
+    }
+    while (true) {
+      const parent = path.dirname(dir)
+      if (parent === dir) break
+      dir = parent
+      if (isSessionWorkspace(path.basename(dir))) {
+        return path.join(path.dirname(path.dirname(dir)), trashName)
       }
     }
-    // Not under a managed root: stage on the source volume itself, still a
-    // pure rename with no cross-drive copy.
-    const parsed = path.parse(path.resolve(sourceAbs))
-    if (parsed.root) return path.join(parsed.root, safeString(settings.trashDirName) || '.dsh-artifact-vault-trash')
+    // Not under any managed root or session workspace: stage on the source
+    // volume itself, still a pure rename with no cross-drive copy.
+    const parsed = path.parse(source)
+    if (parsed.root) return path.join(parsed.root, trashName)
     return trashDir
   }
 
@@ -1602,7 +1625,14 @@ function createVault(ctx, config) {
     const dir = path.join(base, id)
     await mkdir(dir, { recursive: true })
     const destination = path.join(dir, basename)
-    await moveFile(sourceAbs, destination)
+    try {
+      await moveFile(sourceAbs, destination)
+    } catch (caught) {
+      // Roll back the empty staging dir so a failed move never leaves a
+      // stray '.dsh-artifact-vault-trash' behind the real source.
+      await rm(dir, { recursive: true, force: true }).catch(() => {})
+      throw caught
+    }
     return { dir, destination }
   }
 
